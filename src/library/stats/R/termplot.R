@@ -147,8 +147,6 @@ termplot <- function(model, data = NULL, envir = environment(formula(model)),
         stop("'main' must be TRUE, FALSE, NULL or character (vector).")
     main <- rep_len(main, n.tms) # recycling
 
-	#if(any(transform.x)) xlabs <- ifelse(transform.x, lapply(cn, deparse), xlabs)
-
     if (partial.resid || !is.null(smooth)){
 	pres <- residuals(model, "partial")
         if (!is.null(which.terms)) pres <- pres[, which.terms, drop = FALSE]
@@ -223,14 +221,13 @@ termplot <- function(model, data = NULL, envir = environment(formula(model)),
             if (!is.null(use.rows)) xx <- xx[use.rows]
         if (is.null(xlabs)) {
             xlab <- nmx
-            #if (any(transform.x) && transform.x[i]) lab <- deparse(cn[[i]])
         } else xlab <- xlabs[i]
 	    xlims <- range(xx, na.rm = TRUE)
 	    if(rug)
 		xlims[1L] <- xlims[1L] - 0.07*diff(xlims)
 	    oo <- order(xx)
 	    plot(xx[oo], tms[oo, i], type = "l",
-                 xlab = xlabs[i], ylab = ylabs[i],
+                 xlab = xlab, ylab = ylabs[i],
 		 xlim = xlims, ylim = ylims, main = main[i],
                  col = col.term, lwd = lwd.term, ...)
             if(se) se.lines(xx[oo], iy = oo, i = i)
