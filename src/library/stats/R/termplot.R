@@ -39,6 +39,8 @@ termplot <- function(model, data = NULL, envir = environment(formula(model)),
 
     mf <- model.frame(model)
     if (is.null(data))
+        data <- model$data
+    if (is.null(data))
         data <- eval(model$call$data, envir)
     if (is.null(data))
         data <- mf
@@ -46,7 +48,9 @@ termplot <- function(model, data = NULL, envir = environment(formula(model)),
     use.rows <- if (NROW(tms) < NROW(data))
         match(rownames(tms), rownames(data)) ## else NULL
     nmt <- colnames(tms)
-    if (any(grepl(":", nmt, fixed = TRUE)))
+    ord <- attr(terms(model), "order")
+    ord <- ord[match(colnames(terms), attr(terms(model), "term.labels"))]
+    if (any(ord > 1L))
         warning("'model' appears to involve interactions: see the help page",
                 domain = NA, immediate. = TRUE)
     cn <- str2expression(nmt)
@@ -63,24 +67,39 @@ termplot <- function(model, data = NULL, envir = environment(formula(model)),
         stop("'main' must be TRUE, FALSE, NULL or character (vector).")
     main <- rep_len(main, n.tms) # recycling
     pf <- envir
-    carrier <- function(term, transform) { # used for non-factor ones
-	if (length(term) > 1L){
-	    if (transform) tms[,i]
-	    else carrier(term[[2L]], transform)
-	} else
-	    eval(term, data, enclos = pf)
-    }
-    carrier.name <- function(term){
-      	if (length(term) > 1L)
-	    carrier.name(term[[2L]])
-	else
-	    as.character(term)
+    carrier <- function(term, name, transform){
+        # evaluate all named variables in term
+        nm <- str2expression(all.vars(term))
+        if (length(nm)){
+            if (transform) return(structure(tms[, i], name = name))
+            vars <- lapply(nm, eval, envir = data, enclos = pf)
+            # if exactly one named variable with correct length, use that
+            n <- nrow(data)
+            id <- which(lengths(vars) == n)
+            if (length(id) == 1L){
+                return(structure(vars[[id]], name = nm[[id]]))
+            }
+        }
+        # get full term from model frame if available
+        if (name %in% names(mf)) {
+            val <- mf[[name]]
+        } else {
+            # otherwise evaluate the full term in context of data
+            current_seed <- .Random.seed
+            val <- eval(term, envir = data, enclos = pf)
+            if (!identical(.Random.seed, current_seed)) {
+                stop(paste0(
+                    sprintf(c("term %s cannot be reconstructed as it ",
+                             "uses random number generation. \n",
+                             "See Note in ?termplot for how to fix this."),
+                             sQuote(name)))) # TODO remember to add note!, also make nice for translation
+            }
+        }
+        structure(val, name = name)
     }
 
     in.mf <- nmt %in% names(mf)
-    is.fac <- vapply(nmt,
-                     function(i) i %in% names(mf) && is.factor(mf[, i]),
-                     NA)
+    is.fac <- sapply(nmt, function(i) i %in% names(mf) && is.factor(mf[, i]))
 
     if (!plot) {
         outlist <- vector("list", sum(in.mf))
@@ -92,12 +111,14 @@ termplot <- function(model, data = NULL, envir = environment(formula(model)),
             if (is.fac[i]) {
                 ## PR#15344
                 xx <- mf[, nmt[i]]
+                nmx <- nmt[i]
                 if (!is.null(use.rows)) xx <- xx[use.rows]
                 ## "nomatch' in case there is a level not in the data
                 ww <- match(levels(xx), xx, nomatch = 0L)
             }
             else {
-                xx <- carrier(cn[[i]], transform.x[i])
+                xx <- carrier(cn[[i]], nmt[i], transform.x[i])
+                nmx <- attr(xx, "name")
                 if (!is.null(use.rows)) xx <- xx[use.rows]
                 ww <- match(sort(unique(xx)), xx)
             }
@@ -105,12 +126,12 @@ termplot <- function(model, data = NULL, envir = environment(formula(model)),
                 data.frame(x = xx[ww], y = tms[ww, i],
                            se = terms$se.fit[ww, i], row.names = NULL)
             else data.frame(x = xx[ww], y = tms[ww, i], row.names = NULL)
+            name(outlist[[i]]) <- nmx
         }
         attr(outlist, "constant") <- attr(terms, "constant")
         ## might be on the fit component.
         if (se && is.null(attr(outlist, "constant")))
             attr(outlist, "constant") <- attr(terms$fit, "constant")
-        names(outlist) <- sapply(cn, carrier.name)[in.mf]
         return(outlist)
     }
     ## Defaults:
@@ -126,10 +147,8 @@ termplot <- function(model, data = NULL, envir = environment(formula(model)),
         stop("'main' must be TRUE, FALSE, NULL or character (vector).")
     main <- rep_len(main, n.tms) # recycling
 
-    if (is.null(xlabs)){
-        xlabs <- unlist(lapply(cn,carrier.name))
-	if(any(transform.x)) xlabs <- ifelse(transform.x, lapply(cn, deparse), xlabs)
-    }
+	#if(any(transform.x)) xlabs <- ifelse(transform.x, lapply(cn, deparse), xlabs)
+
     if (partial.resid || !is.null(smooth)){
 	pres <- residuals(model, "partial")
         if (!is.null(which.terms)) pres <- pres[, which.terms, drop = FALSE]
@@ -180,11 +199,12 @@ termplot <- function(model, data = NULL, envir = environment(formula(model)),
 	    ll <- levels(ff)
 	    xlims <- range(seq_along(ll)) + c(-.5, .5)
             xx <- as.numeric(ff) ## needed if rug or partial
+        if (is.null(xlabs)) xlab <- nmt[i]
 	    if(rug) {
 		xlims[1L] <- xlims[1L] - 0.07*diff(xlims)
 		xlims[2L] <- xlims[2L] + 0.03*diff(xlims)
 	    }
-	    plot(1, 0, type = "n", xlab = xlabs[i], ylab = ylabs[i],
+	    plot(1, 0, type = "n", xlab = xlab, ylab = ylabs[i],
                  xlim = xlims, ylim = ylims, main = main[i], xaxt="n", ...)
             if (use.factor.levels)
                 axis(1, at = seq_along(ll), labels = ll, ...)
@@ -198,8 +218,13 @@ termplot <- function(model, data = NULL, envir = environment(formula(model)),
 	    }
 	}
 	else { ## continuous carrier
-	    xx <- carrier(cn[[i]], transform.x[i])
+	    xx <- carrier(cn[[i]], nmt[i], transform.x[i])
+        nmx <- attr(xx, "name")
             if (!is.null(use.rows)) xx <- xx[use.rows]
+        if (is.null(xlabs)) {
+            xlab <- nmx
+            #if (any(transform.x) && transform.x[i]) lab <- deparse(cn[[i]])
+        } else xlab <- xlabs[i]
 	    xlims <- range(xx, na.rm = TRUE)
 	    if(rug)
 		xlims[1L] <- xlims[1L] - 0.07*diff(xlims)
