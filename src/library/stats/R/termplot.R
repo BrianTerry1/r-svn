@@ -68,34 +68,29 @@ termplot <- function(model, data = NULL, envir = environment(formula(model)),
     main <- rep_len(main, n.tms) # recycling
     pf <- envir
     carrier <- function(term, name, transform){
-        # evaluate all named variables in term
-        nm <- str2expression(all.vars(term))
-        if (length(nm)){
-            if (transform) return(structure(tms[, i], name = name))
-            vars <- lapply(nm, eval, envir = data, enclos = pf)
-            # if exactly one named variable with correct length, use that
-            n <- nrow(data)
+        # if transform, return predicted term
+        if (transform) return(structure(tms[, i], name = name))
+        # if term is a call, search for single predictor within arguments
+        if (length(term) > 1L) {
+            n <- nrow(mf) + length(model$na.action)
+            vars <- lapply(term[-1L], function(arg){
+                nm <- all.vars(arg)
+                # if one named variable, evaluate this
+                if (length(nm) == 1L) x <- eval(nm, envir = data, enclos = pf)
+                # if not one named variable of correct length, evaluate arg
+                if (length(nm) != 1L || length(x) != n) {
+                    nm <- arg
+                    x <- eval(nm, envir = data, enclos = pf)
+                }
+                return(structure(x, name = nm))
+            })
+            # if only one possible predictor, return that
             id <- which(lengths(vars) == n)
-            if (length(id) == 1L){
-                return(structure(vars[[id]], name = nm[[id]]))
-            }
+            if (length(id) == 1L) return(vars[[id]])
         }
-        # get full term from model frame if available
-        if (name %in% names(mf)) {
-            val <- mf[[name]]
-        } else {
-            # otherwise evaluate the full term in context of data
-            current_seed <- .Random.seed
-            val <- eval(term, envir = data, enclos = pf)
-            if (!identical(.Random.seed, current_seed)) {
-                stop(paste0(
-                    sprintf(c("term %s cannot be reconstructed as it ",
-                             "uses random number generation. \n",
-                             "See Note in ?termplot for how to fix this."),
-                             sQuote(name)))) # TODO remember to add note!, also make nice for translation
-            }
-        }
-        structure(val, name = name)
+        # if single predictor not found in term args, use full term
+        var <- eval(term, data, enclos = pf)
+        structure(var, name = name)
     }
 
     in.mf <- nmt %in% names(mf)
